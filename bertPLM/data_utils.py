@@ -98,17 +98,17 @@ def load_dataset(args, dataset):
     return train_input_sent, valid_input_sent, test_input_sent, train_true_labels, train_noisy_labels, valid_true_labels, valid_noisy_labels, test_labels
 
 def create_dataset(args):
-    if args.dataset == '20news':
+    if args.dataset.lower() == '20news':
         num_labels = 20
         args.num_classes = 20
     
-    elif args.dataset == 'numclaim':
+    elif args.dataset.lower() == 'numclaim':
         args.num_classes = 2
 
-    elif args.dataset == 'SA':
+    elif args.dataset.lower() == 'sa':
         args.num_classes = 3
 
-    elif args.dataset == 'FOMC':
+    elif args.dataset.lower() == 'fomc':
         args.num_classes = 3
 
     if args.saved_dataset == 'n':
@@ -158,6 +158,7 @@ def create_dataset(args):
                                 #return_tensors = 'pt',     # Return pytorch tensors.
                         )
             train_input_ids.append(encoded_sent)
+
 
         train_input_ids = pad_sequences(train_input_ids, maxlen=MAX_LEN, dtype="long", truncating="post", padding="post")
         for seq in train_input_ids:

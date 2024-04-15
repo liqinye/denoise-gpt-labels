@@ -4,7 +4,7 @@ from sentence_transformers import SentenceTransformer
 from bertPLM.data_utils import *
 
 class SentenceBertForClassification(nn.Module):
-    def __init__(self, args, sentBert, num_classes, hidden_size=768, dropout=0.4):
+    def __init__(self, args, sentBert, num_classes, hidden_size=384, dropout=0.1):
         super().__init__()
         self.args = args
         self.num_classes = num_classes
@@ -18,7 +18,6 @@ class SentenceBertForClassification(nn.Module):
                 labels=None,
                 ):
         embeddings = self.sentBert.encode(sentences, convert_to_tensor=True)
-        embeddings = embeddings.to(self.args.device)
         embeddings = self.dropout(embeddings)
         logits = self.classifier(embeddings)
 
@@ -30,8 +29,6 @@ class SentenceBertForClassification(nn.Module):
         
         return outputs
 
-    def encode(self, sentences):
-        return self.sentBert.encode(sentences)
 
 if __name__ == '__main__':
     model = SentenceTransformer('all-MiniLM-L6-v2')

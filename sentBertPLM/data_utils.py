@@ -53,12 +53,12 @@ def corrupt_dataset_IDN(args, inputs, labels, num_labels):
 def load_dataset(args, dataset):
     if dataset == "20news":
         VALIDATION_SPLIT = 0.8
-        newsgroups_train  = fetch_20newsgroups(data_home='datasets/', subset='train',  shuffle=True, random_state=args.seed)
+        newsgroups_train  = fetch_20newsgroups(data_home='../datasets/', subset='train',  shuffle=True, random_state=args.seed)
         newsgroups_train  = fetch_20newsgroups(data_home=args.path, subset='train',  shuffle=True, random_state=args.seed)
         print(newsgroups_train.target_names)
         print(len(newsgroups_train.data))
 
-        newsgroups_test  = fetch_20newsgroups(data_home='datasets/', subset='test',  shuffle=False)
+        newsgroups_test  = fetch_20newsgroups(data_home='../datasets/', subset='test',  shuffle=False)
 
         print(len(newsgroups_test.data))
 
@@ -75,9 +75,9 @@ def load_dataset(args, dataset):
         valid_noisy_labels = None
     
     elif dataset.lower() == 'numclaim' or dataset.lower() == 'sa' or dataset.lower() == 'fomc':
-        train_file_path = f"datasets/train_{dataset.lower()}_example.csv"
-        valid_file_path = f"datasets/valid_{dataset.lower()}_example.csv"
-        test_file_path = f"datasets/test_{dataset.lower()}_example.csv"
+        train_file_path = f"../datasets/train_{dataset.lower()}_example.csv"
+        valid_file_path = f"../datasets/valid_{dataset.lower()}_example.csv"
+        test_file_path = f"../datasets/test_{dataset.lower()}_example.csv"
 
         train_file = pd.read_csv(train_file_path)
         train_true_labels = torch.tensor(train_file['true_label'].values, device=args.device)
@@ -134,99 +134,98 @@ def create_dataset(args):
         valid_noisy_labels = torch.tensor(valid_noisy_labels, dtype=torch.long, device=args.device)
         
 
-        if args.dataset == '20news':
-            MAX_LEN = 150
-        elif args.dataset == 'chemprot':
-            MAX_LEN = 512
-        else:
-            MAX_LEN = 128
+        # if args.dataset == '20news':
+        #     MAX_LEN = 150
+        # elif args.dataset == 'chemprot':
+        #     MAX_LEN = 512
+        # else:
+        #     MAX_LEN = 128
 
+        # TODO: use raw sentence input for trajectory embedding
+        #############
         # Encode train/test text
         # ===========================
-        model = SentenceTransformer(args.bert)
-        train_inputs = []
-        for sent in train_input_sent:
-            encoded_sent = model.encode(sent)
-            train_inputs.append(encoded_sent)
+        # model = SentenceTransformer(args.bert)
+        # train_inputs = []
+        # for sent in train_input_sent:
+        #     encoded_sent = model.encode(sent)
+        #     train_inputs.append(encoded_sent)
 
-        train_inputs = torch.tensor(train_inputs, device=args.device)
+        # train_inputs = torch.tensor(train_inputs, device=args.device)
 
-        valid_inputs = []
-        for sent in valid_input_sent:
-            encoded_sent = model.encode(sent)
-            valid_inputs.append(encoded_sent)
+        # valid_inputs = []
+        # for sent in valid_input_sent:
+        #     encoded_sent = model.encode(sent)
+        #     valid_inputs.append(encoded_sent)
 
 
-        valid_inputs = torch.tensor(valid_inputs, device=args.device)
+        # valid_inputs = torch.tensor(valid_inputs, device=args.device)
 
-        test_inputs = []
-        for sent in test_input_sent:
-            encoded_sent = model.encode(sent)
-            test_inputs.append(encoded_sent)
+        # test_inputs = []
+        # for sent in test_input_sent:
+        #     encoded_sent = model.encode(sent)
+        #     test_inputs.append(encoded_sent)
 
-        test_inputs = torch.tensor(test_inputs, device=args.device)
+        # test_inputs = torch.tensor(test_inputs, device=args.device)
         # ===========================
-        train_data = TensorDataset(train_inputs, train_true_labels, train_noisy_labels)
-        train_sampler = SequentialSampler(train_data)
-        train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size)
+        train_data = list(zip(train_input_sent, train_true_labels, train_noisy_labels))
+        train_dataloader = DataLoader(train_data, batch_size=args.train_batch_size)
 
-        valid_data = TensorDataset(valid_inputs, valid_true_labels, valid_noisy_labels)
-        valid_sampler = SequentialSampler(valid_data)
-        valid_dataloader = DataLoader(valid_data, sampler=valid_sampler, batch_size=args.eval_batch_size)
+        valid_data = list(zip(valid_input_sent, valid_true_labels, valid_noisy_labels))
+        valid_dataloader = DataLoader(valid_data, batch_size=args.eval_batch_size)
 
-        test_data = TensorDataset(test_inputs, test_labels)
-        test_sampler = SequentialSampler(test_data)
-        test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=args.eval_batch_size)
+        test_data = list(zip(test_input_sent, test_labels))
+        test_dataloader = DataLoader(test_data, batch_size=args.eval_batch_size)
 
         if args.dataset.lower() in ['numclaim', 'sa', 'fomc']:
-            file_path = args.path + f'saved_data/{args.dataset.lower()}-train-{args.seed}.pt'
+            file_path = args.path + f'../saved_data/{args.dataset.lower()}-train-{args.seed}.pt'
             torch.save(train_data, file_path)
-            file_path = args.path + f'saved_data/{args.dataset.lower()}-valid-{args.seed}.pt'
+            file_path = args.path + f'../saved_data/{args.dataset.lower()}-valid-{args.seed}.pt'
             torch.save(valid_data, file_path)
-            file_path = args.path + f'saved_data/{args.dataset.lower()}-test-{args.seed}.pt'
+            file_path = args.path + f'../saved_data/{args.dataset.lower()}-test-{args.seed}.pt'
             torch.save(test_data, file_path)
         else:
-            file_path = args.path + f'saved_data/{args.dataset.lower()}-{args.noise_type}-{args.noise_ratio}-train-{args.seed}.pt'
+            file_path = args.path + f'../saved_data/{args.dataset.lower()}-{args.noise_type}-{args.noise_ratio}-train-{args.seed}.pt'
             torch.save(train_data, file_path)
-            file_path = args.path + f'saved_data/{args.dataset.lower()}-{args.noise_type}-{args.noise_ratio}-valid-{args.seed}.pt'
+            file_path = args.path + f'../saved_data/{args.dataset.lower()}-{args.noise_type}-{args.noise_ratio}-valid-{args.seed}.pt'
             torch.save(valid_data, file_path)
-            file_path = args.path + f'saved_data/{args.dataset.lower()}-{args.noise_type}-{args.noise_ratio}-test-{args.seed}.pt'
+            file_path = args.path + f'../saved_data/{args.dataset.lower()}-{args.noise_type}-{args.noise_ratio}-test-{args.seed}.pt'
             torch.save(test_data, file_path)
 
     else:
         if args.dataset.lower() in ['numclaim', 'sa', 'fomc']:
-            file_path = args.path + f'saved_data/{args.dataset.lower()}-train-{args.seed}.pt'
+            file_path = args.path + f'../saved_data/{args.dataset.lower()}-train-{args.seed}.pt'
             train_data = torch.load(file_path)
             train_sampler = SequentialSampler(train_data)
             train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size)
 
-            file_path = args.path + f'saved_data/{args.dataset.lower()}-valid-{args.seed}.pt'
+            file_path = args.path + f'../saved_data/{args.dataset.lower()}-valid-{args.seed}.pt'
             valid_data = torch.load(file_path)
             valid_sampler = SequentialSampler(valid_data)
             valid_dataloader = DataLoader(valid_data, sampler=valid_sampler, batch_size=args.eval_batch_size)
 
-            file_path = args.path + f'saved_data/{args.dataset.lower()}-test-{args.seed}.pt'
+            file_path = args.path + f'../saved_data/{args.dataset.lower()}-test-{args.seed}.pt'
             test_data = torch.load(file_path)
             test_sampler = SequentialSampler(test_data)
             test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=args.eval_batch_size)
         else:
-            file_path = args.path + f'saved_data/{args.dataset.lower()}-{args.noise_type}-{args.noise_ratio}-train-{args.seed}.pt'
+            file_path = args.path + f'../saved_data/{args.dataset.lower()}-{args.noise_type}-{args.noise_ratio}-train-{args.seed}.pt'
             train_data = torch.load(file_path)
             train_sampler = SequentialSampler(train_data)
             train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size)
 
-            file_path = args.path + f'saved_data/{args.dataset.lower()}-{args.noise_type}-{args.noise_ratio}-valid-{args.seed}.pt'
+            file_path = args.path + f'../saved_data/{args.dataset.lower()}-{args.noise_type}-{args.noise_ratio}-valid-{args.seed}.pt'
             valid_data = torch.load(file_path)
             valid_sampler = SequentialSampler(valid_data)
             valid_dataloader = DataLoader(valid_data, sampler=valid_sampler, batch_size=args.eval_batch_size)
 
-            file_path = args.path + f'saved_data/{args.dataset.lower()}-{args.noise_type}-{args.noise_ratio}-test-{args.seed}.pt'
+            file_path = args.path + f'../saved_data/{args.dataset.lower()}-{args.noise_type}-{args.noise_ratio}-test-{args.seed}.pt'
             test_data = torch.load(file_path)
             test_sampler = SequentialSampler(test_data)
             test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=args.eval_batch_size)
 
 
-    return train_data, train_sampler, train_dataloader, valid_data, valid_sampler, valid_dataloader, test_data, test_sampler, test_dataloader
+    return train_data, train_dataloader, valid_data, valid_dataloader, test_data, test_dataloader
 
 
 

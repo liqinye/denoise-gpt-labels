@@ -157,7 +157,6 @@ class MultinomialDiffusion(torch.nn.Module):
     def q_pred(self, log_x_start, t):
         log_cumprod_alpha_t = extract(self.log_cumprod_alpha, t, log_x_start.shape)
         log_1_min_cumprod_alpha = extract(self.log_1_min_cumprod_alpha, t, log_x_start.shape)
-        # x = torch.zeros()
         log_probs = log_add_exp(
             log_x_start + log_cumprod_alpha_t,
             log_1_min_cumprod_alpha - np.log(self.num_classes)

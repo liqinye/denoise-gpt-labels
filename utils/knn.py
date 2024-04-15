@@ -10,12 +10,11 @@ from torch.nn.utils.rnn import pad_sequence
 
 
 class KNN_prior_dynamic:
-    def __init__(self, args, dataset, z0, noisy_train_labels, true_train_labels, noisy_markers):
+    def __init__(self, args, z0, noisy_train_labels, true_train_labels, noisy_markers):
         self.args = args
         self.n_classes = self.args.num_classes
         self.time = time.time()
 
-        self.dataset = dataset
         self.y_hat = noisy_train_labels
         self.y = true_train_labels
         self.noisy_markers = noisy_markers

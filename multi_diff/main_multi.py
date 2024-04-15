@@ -22,14 +22,14 @@ if __name__ == '__main__':
     parser.add_argument("--path", type=str, default='')
     parser.add_argument("--n_model", type=int, default=2, help='The number of detection-relabeling iterations.')
     parser.add_argument("--seed", default=0, type=int, help="Number of epochs for training.")
-    parser.add_argument("--bert", type=str, default="bert-base-uncased")
+    parser.add_argument("--bert", type=str, default="bert-base-uncased", help='bert-base-uncased or all-mpnet-base-v2')
     parser.add_argument("--bert_type", type=str, default='bert', help="plm bert model choice")
     parser.add_argument("--lr", default=5e-5, type=float, help="The initial learning rate for Adam.")
     parser.add_argument('--alpha_t_hi', type=float, default=5)
     parser.add_argument("--noise_ratio", type=float, default=0.2, help='The ratio of noisy data to be poisoned.')
-    parser.add_argument("--diff_epoches", default=10, type=int, help="Number of epochs for training.")
+    parser.add_argument("--diff_epochs", default=10, type=int, help="Number of epochs for training.")
     parser.add_argument("--warmup_epochs", default=5, help="warmup_epochs", type=int)
-    parser.add_argument("--num_timesteps", default=100, help="Number of timesteps for diffusion model", type=int)
+    parser.add_argument("--num_timesteps", default=500, help="Number of timesteps for diffusion model", type=int)
     parser.add_argument("--num_sample", default=6, help="Number of sample for dynamic prior", type=int)
     parser.add_argument('--lambda_t', type=float, default=2)
     parser.add_argument('--diff_batch_size', type=int, default=64, help='Batch size for diffusion training')
@@ -39,8 +39,23 @@ if __name__ == '__main__':
     set_seed(args)
     args.n_gpu = 1
     device = torch.device('cuda:0' if torch.cuda.is_available() else "cpu")
+    print(f'Device using: {device}')
     args.device = device
 
+
+    if args.dataset.lower() == '20news':
+        num_labels = 20
+        args.num_classes = 20
+    
+    elif args.dataset.lower() == 'numclaim':
+        args.num_classes = 2
+
+    elif args.dataset.lower() == 'sa':
+        args.num_classes = 3
+
+    elif args.dataset.lower() == 'fomc':
+        args.num_classes = 3
+        
     # Pre-process dataset
     if args.bert_type == 'bert':
         from bertPLM.data_utils import create_dataset
@@ -68,18 +83,21 @@ if __name__ == '__main__':
         z_train, z_valid, z_test, best_model, dists_list = bert_trainer.train()
 
     elif args.bert_type == 'sentbert':
-        from sentBertPLM.sentBert_trainer import create_dataset
+        from sentBertPLM.data_utils import create_dataset
         from sentBertPLM.sentBert_trainer import sentBert_Trainer
 
-        train_data, train_sampler, train_dataloader, valid_data, valid_sampler, \
-            valid_dataloader, test_data, test_sampler, test_dataloader = create_dataset(args)
+        train_data, train_dataloader, valid_data,\
+            valid_dataloader, test_data, test_dataloader = create_dataset(args)
         train_noisy_labels = torch.tensor([train_data[idx][-1] for idx in range(len(train_data))])
-        train_inputs = torch.stack([train_data[idx][0] for idx in range(len(train_data))], dim=0)
+        # train_inputs = torch.stack([train_data[idx][0] for idx in range(len(train_data))], dim=0)
+        train_inputs = [train_data[idx][0] for idx in range(len(train_data))]
         train_true_labels = torch.stack([train_data[idx][1] for idx in range(len(train_data))], dim=0)
         valid_noisy_labels = torch.tensor([valid_data[idx][-1] for idx in range(len(valid_data))])
-        valid_inputs = torch.stack([valid_data[idx][0] for idx in range(len(valid_data))], dim=0)
+        # valid_inputs = torch.stack([valid_data[idx][0] for idx in range(len(valid_data))], dim=0)
+        valid_inputs = [valid_data[idx][0] for idx in range(len(valid_data))]
         valid_true_labels = torch.stack([valid_data[idx][1] for idx in range(len(valid_data))], dim=0)
-        test_inputs = torch.stack([test_data[idx][0] for idx in range(len(test_data))], dim=0)
+        # test_inputs = torch.stack([test_data[idx][0] for idx in range(len(test_data))], dim=0)
+        test_inputs = [test_data[idx][0] for idx in range(len(test_data))]
         test_labels = torch.stack([test_data[idx][1] for idx in range(len(test_data))], dim=0)
 
         print("================Start Training Stage I Model: Encode the Trajectory!================")
@@ -130,16 +148,20 @@ if __name__ == '__main__':
     z_train = torch.cat((z_train, z_valid), dim=0)
 
     for idx in range(M):
-        knn_inputs = torch.cat((train_inputs, valid_inputs), 0)
-        knn_masks = torch.cat((train_masks, valid_masks), 0)
         knn_z0 = torch.cat((z0_train[:, idx, :], z0_valid[:, idx, :]), 0).squeeze()
         knn_labels = torch.cat((train_noisy_labels, valid_noisy_labels))
         knn_true_labels = torch.cat((train_true_labels, valid_true_labels))
-        knn_data = TensorDataset(knn_inputs, knn_masks, knn_z0, knn_labels)
-        knn_sampler = SequentialSampler(knn_data)
-        knn_dataloader = DataLoader(knn_data, sampler=knn_sampler, batch_size=args.train_batch_size)
+        # if args.bert_type == 'bert':
+        #     knn_inputs = torch.cat((train_inputs, valid_inputs), 0)
+        #     knn_masks = torch.cat((train_masks, valid_masks), 0)
+        #     knn_data = TensorDataset(knn_inputs, knn_masks, knn_z0, knn_labels)
+        # else:
+        #     knn_inputs = train_inputs + valid_inputs
+        #     knn_data = TensorDataset(knn_inputs, knn_z0, knn_labels)
+        # knn_sampler = SequentialSampler(knn_data)
+        # knn_dataloader = DataLoader(knn_data, sampler=knn_sampler, batch_size=args.train_batch_size)
         
-        knn_prior = KNN_prior_dynamic(args, knn_data, knn_z0, knn_labels, knn_true_labels, markers_list[idx].squeeze())
+        knn_prior = KNN_prior_dynamic(args, knn_z0, knn_labels, knn_true_labels, markers_list[idx].squeeze())
         priors, weights, uncertain_marker, true_labels = knn_prior.get_dynamic_prior(k=10)
 
         train_priors.append(priors)
@@ -164,11 +186,15 @@ if __name__ == '__main__':
 
     # prepare datasets for generative model
     train_dataset = TensorDataset(z_train, train_priors, train_prior_weights, train_uncertain_marker, train_noisy_labels, true_labels)
-    test_dataset = TensorDataset(test_inputs, test_masks, test_labels, z_test)
+    if args.bert_type == 'bert':
+        test_dataset = TensorDataset(test_inputs, test_masks, test_labels, z_test)
+        test_sampler = SequentialSampler(test_dataset)
+        test_dataloader = DataLoader(test_dataset, sampler=test_sampler, batch_size=args.train_batch_size)
+    elif args.bert_type == 'sentbert':
+        test_dataset = test_data = list(zip(test_inputs, test_labels, z_test))
+        test_dataloader = DataLoader(test_dataset, batch_size=args.train_batch_size)
 
-    test_sampler = SequentialSampler(test_dataset)
-    # train_z_dataloader = DataLoader(train_z_data, sampler=train_z_sampler, batch_size=args.train_batch_size)
-    test_dataloader = DataLoader(test_dataset, sampler=test_sampler, batch_size=args.train_batch_size)
+    
 
     # multi_diffusion = MultinomialDiffusion().to(args.device)
     multi_trainer = Multinomial_Trainer(args, train_dataset, None, test_dataloader, z_train.size(-1), best_model)

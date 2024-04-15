@@ -64,7 +64,7 @@ class Multinomial_Trainer():
         acc_list = []
 
         print('Multinomial Diffusion Training Start')
-        for epoch in range(self.args.diff_epoches):
+        for epoch in range(self.args.diff_epochs):
             train_sampler = SequentialSampler(self.train_dataset)
             train_loader = DataLoader(self.train_dataset, sampler=train_sampler, batch_size=self.args.train_batch_size)
 
@@ -78,7 +78,7 @@ class Multinomial_Trainer():
             with tqdm(enumerate(train_loader), total=len(train_loader), desc=f'train diffusion epoch {epoch}', ncols=120) as pbar:
 
                 for step, data_batch in pbar:
-                    adjust_learning_rate(self.optimizer, step / len(train_loader) + epoch, warmup_epochs=self.args.warmup_epochs, n_epochs=self.args.diff_epoches, lr_input=0.001)
+                    adjust_learning_rate(self.optimizer, step / len(train_loader) + epoch, warmup_epochs=self.args.warmup_epochs, n_epochs=self.args.diff_epochs, lr_input=1e-3)
 
                     [w, y, weights, uncertain_markers, noisy_y, true_labels] = data_batch
                     y = y.squeeze().to(self.args.device)
@@ -184,7 +184,7 @@ class Multinomial_Trainer():
                         self.EMAs[model_i].update(self.multi_diffs[model_i]._denoise_fn)
             
             # validation & test
-            if (epoch % 10 == 0 and epoch >= self.args.warmup_epochs) or epoch == self.args.diff_epoches-1:
+            if (epoch % 10 == 0 and epoch >= self.args.warmup_epochs) or epoch == self.args.diff_epochs-1:
                 test_acc, plm_acc  = self.test()
                 acc_list.append(test_acc)
                 if test_acc >= max_accuracy:
@@ -204,12 +204,17 @@ class Multinomial_Trainer():
             all_sample = 0
 
             for test_batch_idx, data_batch in tqdm(enumerate(self.test_dataloader), total=len(self.test_dataloader), desc=f'Multinomial Diffusion Sampling...', ncols=100):
-                input_ids, input_mask, target, w = data_batch 
+                if self.args.bert_type == 'bert':
+                    input_ids, input_mask, target, w = data_batch 
+                    outputs = self.best_plm(input_ids, attention_mask=input_mask)
+                else:
+                    input_ids, target, w = data_batch
+                    outputs = self.best_plm(input_ids)
                 w = w.squeeze().to(self.args.device)
                 w = torch.log(w.float().clamp(min=1e-30))
                 target = target.squeeze().to(self.args.device)
 
-                outputs = self.best_plm(input_ids, attention_mask=input_mask)
+                
                 logits = [output[0] for output in outputs]
                 p_y_tilde = [F.softmax(logit, dim=-1).detach().cpu() for logit in logits]
                 avg_p_y_tilde = torch.mean(torch.stack(p_y_tilde, dim=0), 0)

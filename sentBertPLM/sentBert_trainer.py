@@ -24,7 +24,7 @@ class PLModel(nn.Module):
         self.device = [i % args.n_gpu for i in range(args.n_model)]
         self.loss_fnt = nn.CrossEntropyLoss()
         for i in range(args.n_model):
-            model = SentenceBertForClassification(args, args.sentBert, self.num_classes)
+            model = SentenceBertForClassification(args, args.bert, self.num_classes)
             model.to(self.device[i])
             self.models.append(model)
 
@@ -92,7 +92,7 @@ class sentBert_Trainer(nn.Module):
 
             for step, batch in enumerate(self.train_dataloader):
                 # batch = tuple(t.to(self.args.device) for t in batch
-                b_sents, b_labels, _, _ = batch
+                b_sents, _, b_labels = batch
                 b_labels = b_labels.to(self.args.device)
 
                 if num_epochs < int(self.args.epochs/10):
@@ -123,7 +123,7 @@ class sentBert_Trainer(nn.Module):
             train_labels = [None] * len(self.model.models)
             train_logits = [None] * len(self.model.models)
             for batch in self.train_dataloader:
-                b_sents, b_labels, _ = batch
+                b_sents, _, b_labels = batch
                 b_labels = b_labels.to(self.args.device)
 
                 with torch.no_grad():
@@ -157,7 +157,7 @@ class sentBert_Trainer(nn.Module):
             # Evaluate data for one epoch
             for batch in self.valid_dataloader:
                 # Unpack the inputs from our dataloader
-                b_sents, b_labels, _ = batch
+                b_sents, _, b_labels = batch
                 b_labels = b_labels.to(self.args.device)
 
                 # Telling the model not to compute or store gradients, saving memory and speeding up validation
