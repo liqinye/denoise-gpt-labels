@@ -5,7 +5,7 @@ import pandas as pd
 from scipy import stats
 from math import inf
 from sklearn.datasets import fetch_20newsgroups
-from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
+from torch.utils.data import TensorDataset, DataLoader, SequentialSampler
 from sentence_transformers import SentenceTransformer
 from transformers import BertTokenizer
 from keras.preprocessing.sequence import pad_sequences
@@ -211,6 +211,12 @@ def create_dataset(args):
 
         test_inputs = torch.tensor(test_input_ids, device=args.device)
         test_masks = torch.tensor(test_attention_masks, device=args.device)
+
+        sentbert = SentenceTransformer(args.sentbert)
+        train_embedding = sentbert.encode(train_input_sent, convert_to_tensor=True)
+        valid_embedding = sentbert.encode(valid_input_sent, convert_to_tensor=True)
+        test_embedding = sentbert.encode(test_input_sent, convert_to_tensor=True)
+
         # ===========================
         train_data = TensorDataset(train_inputs, train_masks, train_true_labels, train_noisy_labels)
         train_sampler = SequentialSampler(train_data)
@@ -272,7 +278,7 @@ def create_dataset(args):
             test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=args.eval_batch_size)
 
 
-    return train_data, train_sampler, train_dataloader, valid_data, valid_sampler, valid_dataloader, test_data, test_sampler, test_dataloader
+    return train_data, train_sampler, train_dataloader, valid_data, valid_sampler, valid_dataloader, test_data, test_sampler, test_dataloader, train_embedding, valid_embedding, test_embedding
 
 
 

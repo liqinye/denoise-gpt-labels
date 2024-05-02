@@ -97,7 +97,7 @@ def cosine_beta_schedule(timesteps, s = 0.008):
 
 
 class MultinomialDiffusion(torch.nn.Module):
-    def __init__(self, num_classes, w_dim, timesteps=1000, eps=20,
+    def __init__(self, args, num_classes, w_dim, timesteps=1000, eps=20,
                  loss_type='vb_stochastic', parametrization='x0'):
         super(MultinomialDiffusion, self).__init__()
         assert loss_type in ('vb_stochastic', 'vb_all')
@@ -111,10 +111,11 @@ class MultinomialDiffusion(torch.nn.Module):
         self.loss_type = loss_type
         self.num_timesteps = timesteps
         self.parametrization = parametrization
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.args = args
 
         self._denoise_fn = ConditionalModel(self.num_timesteps, y_dim=self.num_classes, 
-                                        w_dim=w_dim, eps=eps, guidance=True).to(self.device)
+                                        w_dim=w_dim, eps=eps, guidance=False).to(self.args.device)
 
         alphas = cosine_beta_schedule(timesteps)
 
@@ -164,11 +165,11 @@ class MultinomialDiffusion(torch.nn.Module):
 
         return log_probs
 
-    def predict_start(self, log_x_t, t, noisy_x, w):
+    def predict_start(self, log_x_t, t, noisy_x, w, x_embed):
         # x_t = log_onehot_to_index(log_x_t)
         log_noisy_x = index_to_log_onehot(noisy_x, self.num_classes)
 
-        out = self._denoise_fn(log_x_t, t, log_noisy_x, w)
+        out = self._denoise_fn(log_x_t, t, log_noisy_x, w, x_embed)
 
         assert out.size(0) == log_x_t.size(0)
         assert out.size(1) == self.num_classes
@@ -199,20 +200,20 @@ class MultinomialDiffusion(torch.nn.Module):
 
         return log_EV_xtmin_given_xt_given_xstart
 
-    def p_pred(self, log_x, t, noisy_x, w):
+    def p_pred(self, log_x, t, noisy_x, w, x_embed):
         if self.parametrization == 'x0':
-            log_x_recon = self.predict_start(log_x, t, noisy_x, w)
+            log_x_recon = self.predict_start(log_x, t, noisy_x, w, x_embed)
             log_model_pred = self.q_posterior(
                 log_x_start=log_x_recon, log_x_t=log_x, t=t)
         elif self.parametrization == 'direct':
-            log_model_pred = self.predict_start(log_x, t, w)
+            log_model_pred = self.predict_start(log_x, t, w, x_embed)
         else:
             raise ValueError
         return log_model_pred
 
     @torch.no_grad()
-    def p_sample(self, log_x, t, noisy_y, w):
-        model_log_prob = self.p_pred(log_x=log_x, t=t, noisy_x=noisy_y, w=w)
+    def p_sample(self, log_x, t, noisy_y, w, x_embed):
+        model_log_prob = self.p_pred(log_x=log_x, t=t, noisy_x=noisy_y, w=w, x_embed=x_embed)
         out = self.log_sample_categorical(model_log_prob)
         prob = torch.exp(model_log_prob)
         return out, prob
@@ -294,11 +295,11 @@ class MultinomialDiffusion(torch.nn.Module):
         kl_prior *= weights
         return sum_except_batch(kl_prior*weights)
 
-    def compute_Lt(self, log_x_start, log_x_t, t, noisy_x, w, weights, detach_mean=False):
+    def compute_Lt(self, log_x_start, log_x_t, t, noisy_x, w, weights, x_embed, detach_mean=False):
         log_true_prob = self.q_posterior(
             log_x_start=log_x_start, log_x_t=log_x_t, t=t)
 
-        log_model_prob = self.p_pred(log_x_t, t, noisy_x, w)
+        log_model_prob = self.p_pred(log_x_t, t, noisy_x, w, x_embed)
 
         if detach_mean:
             log_model_prob = log_model_prob.detach()
@@ -341,7 +342,7 @@ class MultinomialDiffusion(torch.nn.Module):
         else:
             raise ValueError
 
-    def _train_loss(self, y, noisy_y, w, weights):
+    def _train_loss(self, y, noisy_y, w, weights, x_embed):
         b, device = y.size(0), y.device
 
         if self.loss_type == 'vb_stochastic':
@@ -351,7 +352,7 @@ class MultinomialDiffusion(torch.nn.Module):
             log_x_start = index_to_log_onehot(x_start, self.num_classes)
 
             kl, prob = self.compute_Lt(
-                log_x_start, self.q_sample(log_x_start=log_x_start, t=t), t, noisy_y, w, weights)
+                log_x_start, self.q_sample(log_x_start=log_x_start, t=t), t, noisy_y, w, weights, x_embed)
 
             Lt2 = kl.pow(2)
             Lt2_prev = self.Lt_history.gather(dim=0, index=t)
@@ -372,10 +373,10 @@ class MultinomialDiffusion(torch.nn.Module):
         else:
             raise ValueError()
 
-    def log_prob(self, y, noisy_y, w, weights):
+    def log_prob(self, y, noisy_y, w, weights, x_embed):
         b, device = y.size(0), y.device
         if self.training:
-            return self._train_loss(y, noisy_y, w, weights)
+            return self._train_loss(y, noisy_y, w, weights, x_embed)
 
         else:
             log_x_start = index_to_log_onehot(x, self.num_classes)
@@ -392,7 +393,7 @@ class MultinomialDiffusion(torch.nn.Module):
 
             return -loss
 
-    def sample(self, noisy_y, w):
+    def sample(self, noisy_y, w, x_embed):
         b = w.size(0)
         device = self.log_alpha.device
         uniform_logits = torch.zeros((b, self.num_classes), device=device)
@@ -401,7 +402,7 @@ class MultinomialDiffusion(torch.nn.Module):
             # print(f'Sample timestep {i:4d}', end='\r')
 
             t = torch.full((b,), i, device=device, dtype=torch.long)
-            log_z, prob = self.p_sample(log_z, t, noisy_y, w)
+            log_z, prob = self.p_sample(log_z, t, noisy_y, w, x_embed)
         # print()
 
         return log_z, prob
@@ -441,52 +442,99 @@ class ConditionalLinear(nn.Module):
         out = gamma.view(-1, self.num_out) * out
         return out
 
-
 class ConditionalModel(nn.Module):
-    def __init__(self, n_steps, y_dim=10, w_dim=128, eps=20, guidance=True):
+    def __init__(self, n_steps, y_dim=10, w_dim=128, eps=20, guidance=True, x_dim=768):
         super(ConditionalModel, self).__init__()
         n_steps = n_steps + 1
         self.y_dim = y_dim
         self.guidance = guidance
         self.norm = nn.BatchNorm1d(w_dim)
-        self.dropout = nn.Dropout(0.5)
 
         # Unet
         if self.guidance:
-            self.lin1 = ConditionalLinear(y_dim + y_dim, w_dim, n_steps)
+            self.lin1 = ConditionalLinear(y_dim + x_dim, w_dim, n_steps)
         else:
-            self.lin1 = ConditionalLinear(y_dim, w_dim, n_steps)
+            self.lin1 = ConditionalLinear(y_dim, x_dim, n_steps)
+            # self.lin1 = ConditionalLinear(y_dim, w_dim, n_steps)
 
-        self.unetnorm1 = nn.BatchNorm1d(w_dim)
-        self.lin2 = ConditionalLinear(w_dim, w_dim // (eps//4), n_steps)
-        self.unetnorm2 = nn.BatchNorm1d(w_dim // (eps//4))
-        self.lin3 = ConditionalLinear(w_dim // (eps//4), w_dim // (eps//2), n_steps)
-        self.unetnorm3 = nn.BatchNorm1d(w_dim // (eps//2))
-        self.lin4 = ConditionalLinear(w_dim // (eps//2), w_dim // eps, n_steps)
-        self.unetnorm4 = nn.BatchNorm1d(w_dim // eps)
+        # self.unetnorm1 = nn.BatchNorm1d(w_dim)
+        # self.lin2 = ConditionalLinear(w_dim, w_dim, n_steps)
+        # self.unetnorm2 = nn.BatchNorm1d(w_dim)
+        # self.lin3 = ConditionalLinear(w_dim, w_dim, n_steps)
+        # self.unetnorm3 = nn.BatchNorm1d(w_dim)
+        # self.lin4 = nn.Linear(w_dim, y_dim)
 
-        self.lin5 = nn.Linear(w_dim // eps, y_dim)
+        self.unetnorm1 = nn.BatchNorm1d(x_dim)
+        self.lin2 = ConditionalLinear(x_dim, x_dim, n_steps)
+        self.unetnorm2 = nn.BatchNorm1d(x_dim)
+        self.lin3 = ConditionalLinear(x_dim, x_dim, n_steps)
+        self.unetnorm3 = nn.BatchNorm1d(x_dim)
+        self.lin4 = nn.Linear(x_dim, y_dim)
 
-    def forward(self, y, t, noisy_y, w):
+    def forward(self, y, t, noisy_y, w, x_embed):
+
+        # x_embed = self.encoder_x(x)
         w = self.norm(w)
         if self.guidance:
-            y = torch.cat([y, noisy_y], dim=-1)   
+            y = torch.cat([y, x_embed], dim=-1)
 
         y = self.lin1(y, t)
         y = self.unetnorm1(y)
         y = F.softplus(y)
-        y = self.dropout(y)
-        y = w * y
+        y = y * x_embed
         y = self.lin2(y, t)
         y = self.unetnorm2(y)
         y = F.softplus(y)
-        y = self.dropout(y)
         y = self.lin3(y, t)
         y = self.unetnorm3(y)
         y = F.softplus(y)
-        y = self.dropout(y)
-        y = self.lin4(y, t)
-        y = self.unetnorm4(y)
-        y = F.softplus(y)
-        y = self.dropout(y)
-        return self.lin5(y)
+        return self.lin4(y)
+
+# class ConditionalModel(nn.Module):
+#     def __init__(self, n_steps, y_dim=10, w_dim=128, eps=20, guidance=True, x_dim=768):
+#         super(ConditionalModel, self).__init__()
+#         n_steps = n_steps + 1
+#         self.y_dim = y_dim
+#         self.guidance = guidance
+#         self.norm = nn.BatchNorm1d(w_dim)
+#         self.dropout = nn.Dropout(0.5)
+
+#         # Unet
+#         if self.guidance:
+#             self.lin1 = ConditionalLinear(y_dim + y_dim + x_dim, w_dim, n_steps)
+#         else:
+#             self.lin1 = ConditionalLinear(y_dim, w_dim, n_steps)
+
+#         self.unetnorm1 = nn.BatchNorm1d(w_dim)
+#         self.lin2 = ConditionalLinear(w_dim, w_dim // (eps//4), n_steps)
+#         self.unetnorm2 = nn.BatchNorm1d(w_dim // (eps//4))
+#         self.lin3 = ConditionalLinear(w_dim // (eps//4), w_dim // (eps//2), n_steps)
+#         self.unetnorm3 = nn.BatchNorm1d(w_dim // (eps//2))
+#         self.lin4 = ConditionalLinear(w_dim // (eps//2), w_dim // eps, n_steps)
+#         self.unetnorm4 = nn.BatchNorm1d(w_dim // eps)
+
+#         self.lin5 = nn.Linear(w_dim // eps, y_dim)
+
+#     def forward(self, y, t, noisy_y, w, x_embed):
+#         w = self.norm(w)
+#         if self.guidance:
+#             y = torch.cat([y, noisy_y, x_embed], dim=-1)   
+
+#         y = self.lin1(y, t)
+#         y = self.unetnorm1(y)
+#         y = F.softplus(y)
+#         y = self.dropout(y)
+#         y = w * y
+#         y = self.lin2(y, t)
+#         y = self.unetnorm2(y)
+#         y = F.softplus(y)
+#         y = self.dropout(y)
+#         y = self.lin3(y, t)
+#         y = self.unetnorm3(y)
+#         y = F.softplus(y)
+#         y = self.dropout(y)
+#         y = self.lin4(y, t)
+#         y = self.unetnorm4(y)
+#         y = F.softplus(y)
+#         y = self.dropout(y)
+#         return self.lin5(y)

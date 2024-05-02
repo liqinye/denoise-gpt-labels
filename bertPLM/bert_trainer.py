@@ -17,7 +17,8 @@ class NLLModel(nn.Module):
         num_labels = args.num_classes
         self.args = args
         self.models = nn.ModuleList()
-        self.device = [i % args.n_gpu for i in range(args.n_model)]
+        # self.device = [i % args.n_gpu for i in range(args.n_model)]
+        self.device = self.args.device
         self.loss_fnt = nn.CrossEntropyLoss()
         for i in range(args.n_model):
             model = BertForSequenceClassification.from_pretrained(args.bert, num_labels=num_labels, output_hidden_states=True)
@@ -29,9 +30,9 @@ class NLLModel(nn.Module):
         outputs = []
         for i in range(num_models):
             output = self.models[i](
-                input_ids=input_ids.to(self.device[i]),
-                attention_mask=attention_mask.to(self.device[i]),
-                labels=labels.to(self.device[i]) if labels is not None else None,
+                input_ids=input_ids.to(self.device),
+                attention_mask=attention_mask.to(self.device),
+                labels=labels.to(self.device) if labels is not None else None,
                 return_dict=False,
             )
             outputs.append(output)

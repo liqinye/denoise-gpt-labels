@@ -482,23 +482,6 @@ def euclidean_dist_wos(args, train_embeds, train_labels, train_labels2=None):
 
 
 
-# diffusion utils
-def convert_to_simplex(label, simplex_value, num_classes):
-    return 2 * simplex_value * F.one_hot(label, num_classes) - simplex_value
-
-
-def scale(inputs, scale_value):
-    return inputs / scale_value
-
-
-def sample_logits(logits):
-    probs = F.softmax(logits, dim=-1)
-    labels = torch.argmax(probs, dim=-1)
-    return labels
-
-def logits_projection(logits, simplex_value):
-    labels = sample_logits(logits)
-    return convert_to_simplex(labels, simplex_value, num_classes=logits.shape[2])
 
 def adjust_learning_rate(optimizer, epoch, warmup_epochs=100, n_epochs=1000, lr_input=0.001):
     """Decay the learning rate with half-cycle cosine after warmup"""

@@ -8,8 +8,7 @@ import sys
 sys.path.insert(0, '/fintech_3/liqin/denoiseGPT') # this should be the absolute path to project directory
 from utils.utils import set_seed
 from utils.knn import KNN_prior_dynamic
-from multi_diff.multi_diff_trainer import Multinomial_Trainer
-from bertPLM.bert_trainer import NLLModel
+from gauss_diff_trainer import Gaussian_Trainer
 
 
 
@@ -23,7 +22,7 @@ if __name__ == '__main__':
     parser.add_argument("--path", type=str, default='')
     parser.add_argument("--n_model", type=int, default=3, help='The number of detection-relabeling iterations.')
     parser.add_argument("--seed", default=0, type=int, help="Number of epochs for training.")
-    parser.add_argument("--bert", type=str, default="bert-base-uncased", help='bert-base-uncased or all-mpnet-base-v2')
+    parser.add_argument("--bert", type=str, default="bert-base-uncased", help='bert-base-uncased or stsb-bert-base')
     parser.add_argument("--sentbert", type=str, default="all-mpnet-base-v2", help='all-mpnet-base-v2')
     parser.add_argument("--bert_type", type=str, default='bert', help="plm bert model choice")
     parser.add_argument("--lr", default=5e-5, type=float, help="The initial learning rate for Adam.")
@@ -37,12 +36,17 @@ if __name__ == '__main__':
     parser.add_argument('--diff_batch_size', type=int, default=64, help='Batch size for diffusion training')
     
 
+
     args = parser.parse_args()
     set_seed(args)
     args.n_gpu = 1
-    device = torch.device('cuda:0' if torch.cuda.is_available() else "cpu")
+    device = torch.device('cuda:1' if torch.cuda.is_available() else "cpu")
     print(f'Device using: {device}')
     args.device = device
+    model_path_prefix = '/fintech_3/hf_models/'
+
+    args.bert = model_path_prefix + args.bert
+    print(args.bert)
 
 
     if args.dataset.lower() == '20news':
@@ -107,27 +111,48 @@ if __name__ == '__main__':
     #     # finetune pretrained LM on noisy labels
     #     z_train, z_valid, z_test, best_model, dists_list = sentbert_trainer.train()
 
-    z_train = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/z_train.pt', map_location=args.device)
-    z_valid = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/z_val.pt', map_location=args.device)
-    z_test = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/z_test.pt', map_location=args.device)
-    best_model = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/best_model.pt', map_location=args.device)
-    train_inputs = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/train_inputs.pt', map_location=args.device)
-    valid_inputs = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/valid_inputs.pt', map_location=args.device)
-    test_inputs = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/test_inputs.pt', map_location=args.device)
-    train_masks = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/train_masks.pt', map_location=args.device)
-    valid_masks = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/valid_masks.pt', map_location=args.device)
-    test_masks = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/test_masks.pt', map_location=args.device)
-    train_true_labels = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/train_true_labels.pt', map_location=args.device)
-    valid_true_labels = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/valid_true_labels.pt', map_location=args.device)
-    test_true_labels = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/test_true_labels.pt', map_location=args.device)
-    train_noisy_labels = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/train_noisy_labels.pt', map_location=args.device)
-    valid_noisy_labels = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/valid_noisy_labels.pt', map_location=args.device)
-    test_labels = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/test_true_labels.pt', map_location=args.device)
-    train_embedding = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/train_embedding.pt', map_location=args.device)
-    valid_embedding = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/valid_embedding.pt', map_location=args.device)
-    test_embedding = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/test_embedding.pt', map_location=args.device)
-    dists_list = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer/{args.dataset}/dists_list.pt', map_location=args.device)
+    # z_train = torch.load(f'../stage1_buffer/{args.dataset}/z_train.pt')
+    # z_valid = torch.load(f'../stage1_buffer/{args.dataset}/z_val.pt')
+    # z_test = torch.load(f'../stage1_buffer/{args.dataset}/z_test.pt')
+    # best_model = torch.load(f'../stage1_buffer/{args.dataset}/best_model.pt')
+    # # markers_list = torch.load(f'../stage1_buffer/{args.dataset}/markers_list.pt')
+    # train_inputs = torch.load(f'../stage1_buffer/{args.dataset}/train_inputs.pt')
+    # valid_inputs = torch.load(f'../stage1_buffer/{args.dataset}/valid_inputs.pt')
+    # test_inputs = torch.load(f'../stage1_buffer/{args.dataset}/test_inputs.pt')
+    # train_masks = torch.load(f'../stage1_buffer/{args.dataset}/train_masks.pt')
+    # valid_masks = torch.load(f'../stage1_buffer/{args.dataset}/valid_masks.pt')
+    # test_masks = torch.load(f'../stage1_buffer/{args.dataset}/test_masks.pt')
+    # train_true_labels = torch.load(f'../stage1_buffer/{args.dataset}/train_true_labels.pt')
+    # valid_true_labels = torch.load(f'../stage1_buffer/{args.dataset}/valid_true_labels.pt')
+    # test_true_labels = torch.load(f'../stage1_buffer/{args.dataset}/test_true_labels.pt')
+    # train_noisy_labels = torch.load(f'../stage1_buffer/{args.dataset}/train_noisy_labels.pt')
+    # valid_noisy_labels = torch.load(f'../stage1_buffer/{args.dataset}/valid_noisy_labels.pt')
+    # test_labels = torch.load(f'../stage1_buffer/{args.dataset}/test_labels.pt')
+    # train_embedding = torch.load(f'../stage1_buffer/{args.dataset}/train_embedding.pt')
+    # valid_embedding = torch.load(f'../stage1_buffer/{args.dataset}/valid_embedding.pt')
+    # test_embedding = torch.load(f'../stage1_buffer/{args.dataset}/test_embedding.pt')
+    # dists_list = torch.load(f'../stage1_buffer/{args.dataset}/dists_list.pt')
 
+    z_train = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/z_train.pt', map_location=args.device)
+    z_valid = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/z_val.pt', map_location=args.device)
+    z_test = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/z_test.pt', map_location=args.device)
+    best_model = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/best_model.pt', map_location=args.device)
+    train_inputs = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/train_inputs.pt', map_location=args.device)
+    valid_inputs = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/valid_inputs.pt', map_location=args.device)
+    test_inputs = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/test_inputs.pt', map_location=args.device)
+    train_masks = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/train_masks.pt', map_location=args.device)
+    valid_masks = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/valid_masks.pt', map_location=args.device)
+    test_masks = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/test_masks.pt', map_location=args.device)
+    train_true_labels = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/train_true_labels.pt', map_location=args.device)
+    valid_true_labels = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/valid_true_labels.pt', map_location=args.device)
+    test_true_labels = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/test_true_labels.pt', map_location=args.device)
+    train_noisy_labels = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/train_noisy_labels.pt', map_location=args.device)
+    valid_noisy_labels = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/valid_noisy_labels.pt', map_location=args.device)
+    test_labels = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/test_true_labels.pt', map_location=args.device)
+    train_embedding = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/train_embedding.pt', map_location=args.device)
+    valid_embedding = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/valid_embedding.pt', map_location=args.device)
+    test_embedding = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/test_embedding.pt', map_location=args.device)
+    dists_list = torch.load(f'/fintech_3/liqin/DyGen/stage1_buffer_cuda1/{args.dataset}/dists_list.pt', map_location=args.device)
 
     dists_score_list = []
     markers_list = []
@@ -171,13 +196,13 @@ if __name__ == '__main__':
     # torch.save(test_embedding, f'../stage1_buffer_sent/{args.dataset}/test_embedding.pt')
     # torch.save(dists_list, f'../stage1_buffer_sent/{args.dataset}/dists_list.pt')
 
-    
     print(z_train.shape) # (models, epochs, batch, dim)
     z_train = z_train.permute(2,0,1,3)
     B, M, N, D = z_train.shape
     z_train = z_train.reshape(B, M, N*D)
     z0_train = z_train[:, :, :D]
 
+    print(z_valid.size())
     z_valid = z_valid.permute(2,0,1,3)
     B2, M2, N2, D2 = z_valid.shape
     z_valid = z_valid.reshape(B2, M2, N2*D2)
@@ -193,7 +218,6 @@ if __name__ == '__main__':
     train_uncertain_marker = []
 
     z_train = torch.cat((z_train, z_valid), dim=0)
-    print(z_train.size())
 
     for idx in range(M):
         # knn_z0 = torch.cat((z0_train[:, idx, :], z0_valid[:, idx, :]), 0).squeeze()
@@ -235,16 +259,8 @@ if __name__ == '__main__':
         test_dataset = test_data = list(zip(test_inputs, test_labels, z_test))
         test_dataloader = DataLoader(test_dataset, batch_size=args.train_batch_size)
 
+
     # multi_diffusion = MultinomialDiffusion().to(args.device)
-    multi_trainer = Multinomial_Trainer(args, train_dataset, None, test_dataloader, z_train.size(-1), best_model)
+    gauss_trainer = Gaussian_Trainer(args, train_dataset, None, test_dataloader, z_train.size(-1), best_model)
     
-    multi_trainer.train()
-
-
-
-
-
-
-
-    
-        
+    gauss_trainer.train()

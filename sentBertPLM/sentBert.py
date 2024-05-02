@@ -4,7 +4,7 @@ from sentence_transformers import SentenceTransformer
 from bertPLM.data_utils import *
 
 class SentenceBertForClassification(nn.Module):
-    def __init__(self, args, sentBert, num_classes, hidden_size=384, dropout=0.1):
+    def __init__(self, args, sentBert, num_classes, hidden_size=768, dropout=0.1):
         super().__init__()
         self.args = args
         self.num_classes = num_classes

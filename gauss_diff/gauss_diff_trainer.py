@@ -8,14 +8,14 @@ from torch.optim import Adam
 from tqdm import tqdm
 
 from utils.ema import EMA
-from multi_diff.multi_diff import MultinomialDiffusion
+from gauss_diff import GaussianDiffusion
 from utils.utils import adjust_learning_rate
 
 def multinomial_kl(log_prob1, log_prob2):
     kl = (log_prob1.exp() * (log_prob1 - log_prob2)).sum(dim=1)
     return kl
 
-class Multinomial_Trainer():
+class Gaussian_Trainer():
     def __init__(self, args, train_dataset, valid_dataloader, test_dataloader, w_dim, best_plm):
         self.args = args
         self.train_dataset = train_dataset
@@ -23,17 +23,17 @@ class Multinomial_Trainer():
         self.test_dataloader = test_dataloader
         self.best_plm = best_plm
 
-        self.multi_diffs = nn.ModuleList()
+        self.gauss_diffs = nn.ModuleList()
         self.EMAs = [EMA(mu=0.9999) for _ in range(self.args.n_model)]
 
         for i in range(self.args.n_model):
-            multi_diff = MultinomialDiffusion(args=args, timesteps=self.args.num_timesteps, \
+            gauss_diff = GaussianDiffusion(args, num_timesteps=self.args.num_timesteps, \
                         num_classes=self.args.num_classes, w_dim=w_dim)
-            multi_diff.to(self.args.device)
-            self.EMAs[i].register(multi_diff._denoise_fn)
-            self.multi_diffs.append(multi_diff)
+            gauss_diff.to(self.args.device)
+            self.EMAs[i].register(gauss_diff._denoise_fn)
+            self.gauss_diffs.append(gauss_diff)
         
-        self.optimizer = Adam(self.multi_diffs.parameters(), lr=self.args.lr, \
+        self.optimizer = Adam(self.gauss_diffs.parameters(), lr=self.args.lr, \
                             weight_decay=0.0, betas=(0.9, 0.999), amsgrad=False, eps=1e-08)
                             
     def sample_uncertain_y(self, y, weights, uncertain_idx):
@@ -63,12 +63,12 @@ class Multinomial_Trainer():
         max_accuracy = 0.0
         acc_list = []
 
-        print('Multinomial Diffusion Training Start')
+        print('Gaussian Diffusion Training Start')
         for epoch in range(self.args.diff_epochs):
             train_sampler = SequentialSampler(self.train_dataset)
             train_loader = DataLoader(self.train_dataset, sampler=train_sampler, batch_size=self.args.train_batch_size)
 
-            self.multi_diffs.train()
+            self.gauss_diffs.train()
 
             if epoch <= self.args.warmup_epochs:
                 self.lambda_t = 0
@@ -78,18 +78,18 @@ class Multinomial_Trainer():
             with tqdm(enumerate(train_loader), total=len(train_loader), desc=f'train diffusion epoch {epoch}', ncols=120) as pbar:
 
                 for step, data_batch in pbar:
-                    adjust_learning_rate(self.optimizer, step / len(train_loader) + epoch, warmup_epochs=self.args.warmup_epochs, n_epochs=self.args.diff_epochs, lr_input=1e-3)
+                    adjust_learning_rate(self.optimizer, step / len(train_loader) + epoch, warmup_epochs=self.args.warmup_epochs, n_epochs=self.args.diff_epochs, lr_input=6e-4)
 
                     [w, y, weights, uncertain_markers, noisy_y, true_labels, x_embed] = data_batch
+
                     y = y.squeeze().to(self.args.device)
                     weights = weights.to(self.args.device)
                     uncertain_markers = uncertain_markers.to(self.args.device)
+                    noisy_y = nn.functional.one_hot(noisy_y, num_classes=self.args.num_classes).float()
                     noisy_y = noisy_y.to(self.args.device)
                     w = w.to(self.args.device).squeeze()
-                    w = torch.log(w.float().clamp(min=1e-30))
                     n = w.size(0)
                     x_embed = x_embed.to(self.args.device).squeeze()
-                    x_embed = torch.log(x_embed.float().clamp(min=1e-30))
 
                     total_diff_loss = 0.0
                     total_reg_loss = 0.0
@@ -117,12 +117,12 @@ class Multinomial_Trainer():
                                 sample_y, uncertain_weights = self.sample_uncertain_y(uncertain_y_batch, uncertain_weights_batch, uncertain_idx)
 
                                 with torch.cuda.amp.autocast():
-                                    self.multi_diffs[model_i].eval()
-                                    logit, prob = self.multi_diffs[model_i].sample(sample_y, w[uncertain_idx, model_i, :], x_embed[uncertain_idx, :])
-
+                                    self.gauss_diffs[model_i].eval()
+                                    label_t_0 = self.gauss_diffs[model_i].reverse_ddim(w[uncertain_idx, model_i, :], x_embed[uncertain_idx, :], stochastic=False)
+                                    output = torch.softmax(-(label_t_0-1)**2, dim=-1)
                                 # Update Uncertain Weights based on Model Feedback
                                 # =================================================
-                                pred_labels = torch.argmax(logit, dim=1)
+                                pred_labels = torch.argmax(output, dim=1)
                                 for (i, idx) in enumerate(uncertain_idx):
                                     pred_y = pred_labels[i]
                                     # uncertain_y = torch.tensor(uncertain_y_batch[i], device=self.args.device)
@@ -157,11 +157,19 @@ class Multinomial_Trainer():
                             current_y_model[certain_idx] = certain_y_batch
                             current_y_model = current_y_model[current_y_model != -1]
 
+                        t = torch.randint(low=0, high=self.args.num_timesteps, size=(n // 2 + 1,)).to(self.args.device)
+                        t = torch.cat([t, self.args.num_timesteps - 1 - t], dim=0)[:n]
                         with torch.cuda.amp.autocast():
-                            self.multi_diffs[model_i].train()
+                            self.gauss_diffs[model_i].train()
                             weights_model = torch.tensor([weights_model[i, current_y_model[i]] for i in range(weights_model.size(0))], device=self.args.device)
-                            diff_loss, prob = self.multi_diffs[model_i].log_prob(current_y_model, noisy_y, w_model, weights_model, x_embed)
-                            diff_loss = - diff_loss.sum() / (math.log(2) * n)
+                            current_y_model = nn.functional.one_hot(current_y_model, num_classes=self.args.num_classes)
+                            output, expect = self.gauss_diffs[model_i].forward_t(current_y_model, w_model, t, x_embed)
+                            prob = torch.softmax(-(output-1)**2, dim=-1)
+                            # mse_loss = nn.MSELoss(reduction='none')(expect, output)
+                            labels = torch.argmax(current_y_model, dim=-1)
+                            mse_loss = nn.CrossEntropyLoss(reduction='none')(-(output-1)**2, labels)
+                            weighted_mse_loss = torch.matmul(weights_model, mse_loss.double())
+                            diff_loss = torch.mean(weighted_mse_loss)
                         
                         prob_list[model_i] = prob
                         total_diff_loss += diff_loss
@@ -179,18 +187,18 @@ class Multinomial_Trainer():
                     
                     self.optimizer.zero_grad()
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(self.multi_diffs[model_i].parameters(), 1.0)
+                    torch.nn.utils.clip_grad_norm_(self.gauss_diffs[model_i].parameters(), 1.0)
                     self.optimizer.step()
 
                     for model_i in range(self.args.n_model):
-                        self.EMAs[model_i].update(self.multi_diffs[model_i]._denoise_fn)
+                        self.EMAs[model_i].update(self.gauss_diffs[model_i]._denoise_fn)
             
             # validation & test
-            if (epoch % 10 == 0 and epoch >= self.args.warmup_epochs) or epoch == self.args.diff_epochs-1:
+            if (epoch % 1 == 0 and epoch >= self.args.warmup_epochs) or epoch == self.args.diff_epochs-1:
                 test_acc, plm_acc  = self.test()
                 acc_list.append(test_acc)
                 if test_acc >= max_accuracy:
-                    torch.save(self.multi_diffs, f"best_multi_diffusion_{self.args.dataset}.pt")
+                    torch.save(self.gauss_diffs, f"best_multi_diffusion_{self.args.dataset}.pt")
                     print(f"Model saved, update best accuracy at Epoch {epoch}, test acc: {test_acc}")
                 print(f"Epoch {epoch}: PLM acc: {plm_acc}, Denoising acc: {test_acc}")
                 max_accuracy = max(max_accuracy, test_acc)
@@ -198,16 +206,16 @@ class Multinomial_Trainer():
         print(acc_list)
 
     def test(self):
-        self.multi_diffs.eval()
+        self.gauss_diffs.eval()
         start = time.time()
         with torch.no_grad():
             correct = 0
             plm_correct = 0
             all_sample = 0
 
-            for test_batch_idx, data_batch in tqdm(enumerate(self.test_dataloader), total=len(self.test_dataloader), desc=f'Multinomial Diffusion Sampling...', ncols=100):
+            for test_batch_idx, data_batch in tqdm(enumerate(self.test_dataloader), total=len(self.test_dataloader), desc=f'Gaussian Diffusion Sampling...', ncols=100):
                 if self.args.bert_type == 'bert':
-                    input_ids, input_mask, target, w, x_embed = data_batch
+                    input_ids, input_mask, target, w, x_embed = data_batch 
                     outputs = self.best_plm(input_ids, attention_mask=input_mask)
                 else:
                     input_ids, target, w = data_batch
@@ -224,29 +232,28 @@ class Multinomial_Trainer():
 
                 pred_labels = torch.zeros(self.args.n_model, w.size(0), self.args.num_classes)
                 for model_i in range(self.args.n_model):
-                    label_t_0, prob = self.multi_diffs[model_i].sample(labels.to(torch.long).to(self.args.device), w[:,model_i,:], x_embed)
-                    pred_labels[model_i] = torch.softmax(prob, dim=1)
+                    label_t_0 = self.gauss_diffs[model_i].reverse_ddim(w[:,model_i,:], x_embed, stochastic=False)
+                    pred_labels[model_i] = torch.softmax(-(label_t_0 - 1)**2, dim=1)
                 
-                # avg_pred_labels = torch.mean(pred_labels, dim=0)
-                # pred_labels = torch.argmax(avg_pred_labels, dim=-1)
+                avg_pred_labels = torch.mean(pred_labels, dim=0)
+                pred_labels = torch.argmax(avg_pred_labels, dim=-1)
+                # p_y_y_tilde_list = []
+                # for model_i in range(self.args.n_model):
+                #     p_y_bar_x_y_tilde = torch.zeros(target.size(0), self.args.num_classes, self.args.num_classes).to(self.args.device)
+                #     for label in range(self.args.num_classes):
+                #         labels = torch.ones(target.size(0)) * label
+                #         label_t_0, prob = self.gauss_diffs[model_i].sample(labels.to(torch.long).to(self.args.device), w[:,model_i,:], x_embed)
+                #         p_y_bar_x_y_tilde[:,:,label] = prob
 
-                p_y_y_tilde_list = []
-                for model_i in range(self.args.n_model):
-                    p_y_bar_x_y_tilde = torch.zeros(target.size(0), self.args.num_classes, self.args.num_classes).to(self.args.device)
-                    for label in range(self.args.num_classes):
-                        labels = torch.ones(target.size(0)) * label
-                        label_t_0, prob = self.multi_diffs[model_i].sample(labels.to(torch.long).to(self.args.device), w[:,model_i,:], x_embed)
-                        p_y_bar_x_y_tilde[:,:,label] = prob
-
-                    # P(y|y^,x)*P(y^|x)=P(y,y^|x)
-                    p_y_expansion = p_y_tilde[model_i].squeeze().reshape(w.size(0), 1, self.args.num_classes).repeat([1, self.args.num_classes, 1])
-                    p_y_y_tilde = p_y_bar_x_y_tilde.cpu().detach() * p_y_expansion  # batch*class*label
-                    p_y_y_tilde_list.append(p_y_y_tilde)
-                if self.args.n_model == 1:
-                    p_y_y_tilde_final = p_y_y_tilde_list[-1].squeeze()
-                else:
-                    p_y_y_tilde_final = torch.stack(p_y_y_tilde_list, dim=0).mean(0)
-                _, pred_labels = torch.max(torch.sum(p_y_y_tilde_final, dim=2), dim=1)
+                #     # P(y|y^,x)*P(y^|x)=P(y,y^|x)
+                #     p_y_expansion = p_y_tilde[model_i].squeeze().reshape(w.size(0), 1, self.args.num_classes).repeat([1, self.args.num_classes, 1])
+                #     p_y_y_tilde = p_y_bar_x_y_tilde.cpu().detach() * p_y_expansion  # batch*class*label
+                #     p_y_y_tilde_list.append(p_y_y_tilde)
+                # if self.args.n_model == 1:
+                #     p_y_y_tilde_final = p_y_y_tilde_list[-1].squeeze()
+                # else:
+                #     p_y_y_tilde_final = torch.stack(p_y_y_tilde_list, dim=0).mean(0)
+                # _, pred_labels = torch.max(torch.sum(p_y_y_tilde_final, dim=2), dim=1)
 
                 correct += torch.sum(pred_labels==target.detach().cpu()).item()
                 plm_correct += torch.sum(plm_pred_labels==target.detach().cpu()).item()
